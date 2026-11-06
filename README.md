@@ -8,16 +8,22 @@ Heroics is a full-stack, gamified campus management ecosystem. It transforms sta
 - **Backend:** Node.js, Express.js
 - **Database:** PostgreSQL with Prisma ORM
 - **Authentication:** JWT (JSON Web Tokens)
-- **Features:** QR-based check-ins, capacity management, role-based dashboards.
 
-## 👥 The Party (Team Details)
+## 👥 The Party (Team details)
 
 | Role | Name | Enrollment No. | GitHub Username |
 |------|------|----------------|-----------------|
-| **Group Lead (Architecture & Gamification)** | Aditya Srivastava | 2501010029 | AdityaSrivastava-07 |
-| **Backend & Guild API Developer** | Rajveer Kumar | 2501010368 | rajveerkumar0602-cmyk |
-| **Frontend & Quest Board Developer** | Yash Dangayach | 2501010600 | yashdangayach0-cloud |
-| **Execution & QR Systems Developer** | Naitik | 2501010291 | Naitik-93 |
+| Group Lead | Aditya Srivastava | 2501010029 | AdityaSrivastava-07 |
+| Member 2 | Rajveer Kumar | 2501010368 | rajveerkumar0602-cmyk |
+| Member 3 | Yash Dangayach | 2501010600 | yashdangayach0-cloud |
+| Member 4 | Naitik | 2501010291 | Naitik-93 |
 
----
+**Team No.:** T0056  
+**Section:** D  
 **Repository URL:** https://github.com/AdityaSrivastava-07/AP-DE-Capstone
+
+## 📂 Current Foundation Completed by Aditya Srivastava
+- [x] Initialized Express Server (`server.js`)
+- [x] Configured Prisma 7 PostgreSQL Database Connection (`prisma.js`)
+- [x] Defined Gamified Schema Models (Heroes, Guilds, Quests, Badges)
+- [x] Implemented Base JWT Authentication Middleware (`middleware/auth.js`)
