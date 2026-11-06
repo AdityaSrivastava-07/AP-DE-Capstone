@@ -1,0 +1,93 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  HERO         // Standard Student
+  GUILD_MASTER // Club Head
+  ADMIN        // College Admin
+}
+
+enum QuestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+model Hero {
+  id           Int       @id @default(autoincrement())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         Role      @default(HERO)
+  xp           Int       @default(0)      // Experience points earned
+  createdAt    DateTime  @default(now())
+
+  // Relations
+  ledGuild      Guild?         @relation("GuildMaster")
+  registrations Registration[]
+  badges        Badge[]        // Earned by attending quests
+}
+
+model Guild {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique
+  description String
+  logoUrl     String?
+  headId      Int      @unique
+  master      Hero     @relation("GuildMaster", fields: [headId], references: [id])
+  
+  quests      Quest[]
+}
+
+model Quest {
+  id          Int         @id @default(autoincrement())
+  title       String
+  description String
+  venue       String
+  capacity    Int
+  xpReward    Int         @default(50)  // Configurable XP for attendance
+  status      QuestStatus @default(PENDING)
+  startTime   DateTime
+  endTime     DateTime
+  guildId     Int
+  
+  guild       Guild       @relation(fields: [guildId], references: [id])
+  registrations Registration[]
+  badges        Badge[]
+}
+
+model Registration {
+  id        Int      @id @default(autoincrement())
+  heroId    Int
+  questId   Int
+  qrToken   String   @unique @default(uuid()) // Unique QR for check-in
+  createdAt DateTime @default(now())
+
+  hero      Hero     @relation(fields: [heroId], references: [id])
+  quest     Quest    @relation(fields: [questId], references: [id])
+
+  @@unique([heroId, questId]) // A hero can only register once per quest
+}
+
+model Badge {
+  id        Int      @id @default(autoincrement())
+  heroId    Int
+  questId   Int
+  earnedAt  DateTime @default(now())
+
+  hero      Hero     @relation(fields: [heroId], references: [id])
+  quest     Quest    @relation(fields: [questId], references: [id])
+
+  @@unique([heroId, questId]) // Only one badge per quest
+}
