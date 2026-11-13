@@ -3,6 +3,9 @@ const cors = require('cors');
 
 const app = express();
 
+const attendanceRoutes = require('./routes/attendance');
+app.use('/attendance', attendanceRoutes);
+
 // Middleware
 app.use(cors());
 app.use(express.json());
