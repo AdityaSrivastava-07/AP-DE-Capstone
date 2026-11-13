@@ -3,16 +3,17 @@ const cors = require('cors');
 
 const app = express();
 
-const attendanceRoutes = require('./routes/attendance');
-app.use('/attendance', attendanceRoutes);
-
-// Middleware
+// 1. Core Middlewares
 app.use(cors());
 app.use(express.json());
 
-// Import Routes
+// 2. Import Routes (Must be declared before app.use)
 const authRoutes = require('./routes/auth');
+const attendanceRoutes = require('./routes/attendance');
+
+// 3. Register Routes
 app.use('/auth', authRoutes);
+app.use('/attendance', attendanceRoutes);
 
 // Health Check Route
 app.get('/', (req, res) => {
@@ -24,4 +25,3 @@ const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
-

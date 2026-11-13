@@ -31,6 +31,7 @@ model Hero {
   passwordHash String
   role         Role      @default(HERO)
   xp           Int       @default(0)      // Experience points earned
+  level    Int    @default(1)
   createdAt    DateTime  @default(now())
 
   // Relations
