@@ -1,6 +1,9 @@
 const express = require('express');
 const cors = require('cors');
 
+const attendanceRoutes = require('./routes/attendance');
+app.use('/api/attendance', attendanceRoutes);
+
 const app = express();
 
 // 1. Core Middlewares
