@@ -2,64 +2,92 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../prisma');
 const { authenticateToken } = require('../middleware/auth');
+const { completeQuestForHero } = require('../services/gamification');
+
+function parsePositiveInt(value) {
+  const num = Number(value);
+  return Number.isInteger(num) && num > 0 ? num : null;
+}
 
 /**
  * @route   POST /attendance/register
- * @desc    Register the authenticated Hero for a Quest and return qrToken
+ * @desc    Register the authenticated Hero for an APPROVED Quest and return qrToken
  * @access  Private (Hero)
  */
 router.post('/register', authenticateToken, async (req, res) => {
   try {
-    const { questId } = req.body;
     const heroId = req.user.id;
-    const parsedQuestId = Number(questId);
+    const parsedQuestId = parsePositiveInt(req.body.questId);
 
     if (!parsedQuestId) {
-      return res.status(400).json({ error: 'Valid questId is required.' });
+      return res.status(400).json({ error: 'Valid positive questId is required.' });
     }
 
-    const quest = await prisma.quest.findUnique({
-      where: { id: parsedQuestId },
-      include: { _count: { select: { registrations: true } } },
-    });
-
-    if (!quest) {
-      return res.status(404).json({ error: 'Quest not found.' });
-    }
-
-    if (quest.status !== 'APPROVED') {
-      return res.status(400).json({ error: `Cannot register for a ${quest.status} quest.` });
-    }
-
-    const existingRegistration = await prisma.registration.findUnique({
-      where: {
-        heroId_questId: { heroId, questId: quest.id },
-      },
-    });
-
-    if (existingRegistration) {
-      return res.status(200).json({
-        message: 'Already registered for this quest.',
-        registration: existingRegistration,
+    const result = await prisma.$transaction(async (tx) => {
+      const quest = await tx.quest.findUnique({
+        where: { id: parsedQuestId },
+        include: { _count: { select: { registrations: true } } },
       });
-    }
 
-    if (quest._count.registrations >= quest.capacity) {
-      return res.status(409).json({ error: 'Quest capacity has been reached.' });
-    }
+      if (!quest) {
+        return { status: 404, body: { error: 'Quest not found.' } };
+      }
 
-    const registration = await prisma.registration.create({
-      data: {
-        heroId,
-        questId: quest.id,
-      },
+      if (quest.status !== 'APPROVED') {
+        return {
+          status: 400,
+          body: { error: `Cannot register for a ${quest.status} quest.` },
+        };
+      }
+
+      if (quest.endTime && new Date() > new Date(quest.endTime)) {
+        return {
+          status: 400,
+          body: { error: 'Cannot register for a quest that has already ended.' },
+        };
+      }
+
+      const existingRegistration = await tx.registration.findUnique({
+        where: {
+          heroId_questId: { heroId, questId: quest.id },
+        },
+      });
+
+      if (existingRegistration) {
+        return {
+          status: 200,
+          body: {
+            message: 'Already registered for this quest.',
+            registration: existingRegistration,
+          },
+        };
+      }
+
+      if (quest.capacity != null && quest._count.registrations >= quest.capacity) {
+        return { status: 409, body: { error: 'Quest capacity has been reached.' } };
+      }
+
+      const registration = await tx.registration.create({
+        data: {
+          heroId,
+          questId: quest.id,
+        },
+      });
+
+      return {
+        status: 201,
+        body: {
+          message: 'Registered for quest successfully!',
+          registration,
+        },
+      };
     });
 
-    return res.status(201).json({
-      message: 'Registered for quest successfully!',
-      registration,
-    });
+    return res.status(result.status).json(result.body);
   } catch (error) {
+    if (error.code === 'P2002') {
+      return res.status(409).json({ error: 'Already registered for this quest.' });
+    }
     console.error('Registration error:', error);
     return res.status(500).json({ error: 'Failed to register for quest.' });
   }
@@ -67,20 +95,20 @@ router.post('/register', authenticateToken, async (req, res) => {
 
 /**
  * @route   POST /attendance/checkin
- * @desc    Verify registration/check-in code, record attendance badge, and award XP atomically
+ * @desc    Verify registration qrToken or check-in code, issue badge, and award XP atomically
  * @access  Private (Hero)
  */
 router.post('/checkin', authenticateToken, async (req, res) => {
   try {
-    const { questId, checkInCode } = req.body;
     const heroId = req.user.id;
-    const parsedQuestId = Number(questId);
+    const parsedQuestId = parsePositiveInt(req.body.questId);
+    const rawCode = req.body.checkInCode;
 
-    if (!parsedQuestId || !checkInCode || !String(checkInCode).trim()) {
-      return res.status(400).json({ error: 'questId and checkInCode are required.' });
+    if (!parsedQuestId || typeof rawCode !== 'string' || !rawCode.trim()) {
+      return res.status(400).json({ error: 'Valid questId and non-empty checkInCode are required.' });
     }
 
-    const code = String(checkInCode).trim();
+    const code = rawCode.trim();
 
     const quest = await prisma.quest.findUnique({
       where: { id: parsedQuestId },
@@ -90,7 +118,17 @@ router.post('/checkin', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Quest not found.' });
     }
 
-    // Check if the hero already earned a badge (checked in) for this quest
+    if (quest.status !== 'APPROVED') {
+      return res.status(400).json({
+        error: `Check-in is not allowed for a ${quest.status} quest.`,
+      });
+    }
+
+    if (quest.endTime && new Date() > new Date(quest.endTime)) {
+      return res.status(400).json({ error: 'This quest has already ended.' });
+    }
+
+    // Check if already checked in early for a clear 409 response
     const existingBadge = await prisma.badge.findUnique({
       where: {
         heroId_questId: { heroId, questId: quest.id },
@@ -101,75 +139,43 @@ router.post('/checkin', authenticateToken, async (req, res) => {
       return res.status(409).json({ error: 'You have already checked into this quest.' });
     }
 
-    // Match either a personal registration qrToken for this quest or a quest check-in code
+    // Validate check-in code against personal Registration.qrToken or configured secret
     const registration = await prisma.registration.findUnique({
       where: {
         heroId_questId: { heroId, questId: quest.id },
       },
     });
 
-    const matchesQrToken = registration && registration.qrToken === code;
-    const matchesQuestCode =
-      (process.env.QUEST_CHECKIN_CODE && code === process.env.QUEST_CHECKIN_CODE) ||
-      code === `QUEST-${quest.id}`;
+    const matchesQrToken = Boolean(registration && registration.qrToken && registration.qrToken === code);
+    const matchesEnvCode = Boolean(
+      process.env.QUEST_CHECKIN_CODE && code === process.env.QUEST_CHECKIN_CODE
+    );
+    const matchesDevFallback =
+      process.env.NODE_ENV !== 'production' && code === `QUEST-${quest.id}`;
 
-    if (!matchesQrToken && !matchesQuestCode) {
+    if (!matchesQrToken && !matchesEnvCode && !matchesDevFallback) {
       return res.status(401).json({ error: 'Invalid check-in or QR code.' });
     }
 
-    const xpEarned = quest.xpReward || 50;
-
-    const result = await prisma.$transaction(async (tx) => {
-      // Ensure a Registration row exists even if checked in via event code
-      const ensuredRegistration =
-        registration ||
-        (await tx.registration.create({
-          data: { heroId, questId: quest.id },
-        }));
-
-      const badge = await tx.badge.create({
-        data: {
-          heroId,
-          questId: quest.id,
-        },
-      });
-
-      const currentHero = await tx.hero.findUnique({
-        where: { id: heroId },
-        select: { xp: true },
-      });
-
-      const newTotalXp = (currentHero?.xp ?? 0) + xpEarned;
-      const newLevel = Math.floor(newTotalXp / 500) + 1;
-
-      const updatedHero = await tx.hero.update({
-        where: { id: heroId },
-        data: {
-          xp: newTotalXp,
-          level: newLevel,
-        },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          xp: true,
-          level: true,
-        },
-      });
-
-      return { badge, updatedHero, registration: ensuredRegistration };
-    });
+    const result = await completeQuestForHero(heroId, quest.id);
 
     return res.status(200).json({
-      message: `Successfully checked in! Awarded +${xpEarned} XP.`,
-      xpEarned,
-      newTotalXp: result.updatedHero.xp,
-      newLevel: result.updatedHero.level,
+      message: result.message,
+      xpEarned: result.xpEarned,
+      newTotalXp: result.newTotalXp,
+      newLevel: result.newLevel,
+      leveledUp: result.leveledUp,
+      progress: result.progress,
       badge: result.badge,
       hero: result.updatedHero,
     });
   } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ error: error.message });
+    }
+    if (error.code === 'P2002') {
+      return res.status(409).json({ error: 'You have already checked into this quest.' });
+    }
     console.error('Check-in error:', error);
     return res.status(500).json({ error: 'Internal server error during attendance check-in.' });
   }
@@ -177,15 +183,16 @@ router.post('/checkin', authenticateToken, async (req, res) => {
 
 /**
  * @route   GET /attendance/leaderboard/heroes
- * @desc    Fetch top heroes ranked by XP
+ * @desc    Fetch top heroes ranked by XP & level
  * @access  Public
  */
 router.get('/leaderboard/heroes', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit, 10) || 10;
+    const rawLimit = parseInt(req.query.limit, 10);
+    const limit = Number.isNaN(rawLimit) ? 10 : Math.min(Math.max(rawLimit, 1), 100);
 
     const heroes = await prisma.hero.findMany({
-      orderBy: [{ xp: 'desc' }, { id: 'asc' }],
+      orderBy: [{ xp: 'desc' }, { level: 'desc' }, { id: 'asc' }],
       take: limit,
       select: {
         id: true,
@@ -217,6 +224,63 @@ router.get('/leaderboard/heroes', async (req, res) => {
   } catch (error) {
     console.error('Leaderboard error:', error);
     return res.status(500).json({ error: 'Failed to retrieve hero leaderboard.' });
+  }
+});
+
+/**
+ * @route   GET /attendance/leaderboard/guilds
+ * @desc    Fetch active guilds ranked by total attendance XP and hosted quests
+ * @access  Public
+ */
+router.get('/leaderboard/guilds', async (req, res) => {
+  try {
+    const guilds = await prisma.guild.findMany({
+      include: {
+        master: {
+          select: { id: true, name: true, xp: true, level: true },
+        },
+        quests: {
+          where: { status: { in: ['APPROVED', 'COMPLETED'] } },
+          select: {
+            xpReward: true,
+            _count: { select: { badges: true } },
+          },
+        },
+      },
+    });
+
+    const standings = guilds
+      .map((guild) => {
+        const questAttendanceXp = guild.quests.reduce(
+          (sum, q) => sum + q.xpReward * q._count.badges,
+          0
+        );
+        const totalAttendees = guild.quests.reduce(
+          (sum, q) => sum + q._count.badges,
+          0
+        );
+
+        return {
+          id: guild.id,
+          name: guild.name,
+          description: guild.description,
+          logoUrl: guild.logoUrl,
+          guildMaster: guild.master ? guild.master.name : 'Unassigned',
+          totalXp: questAttendanceXp,
+          questsHosted: guild.quests.length,
+          totalAttendees,
+        };
+      })
+      .sort((a, b) => b.totalXp - a.totalXp || b.totalAttendees - a.totalAttendees || a.id - b.id)
+      .map((guild, index) => ({
+        rank: index + 1,
+        ...guild,
+      }));
+
+    return res.status(200).json({ standings });
+  } catch (error) {
+    console.error('Guild leaderboard error:', error);
+    return res.status(500).json({ error: 'Failed to retrieve guild standings.' });
   }
 });
 
