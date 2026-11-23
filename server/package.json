@@ -4,10 +4,14 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-  "test": "echo \"Error: no test specified\" && exit 1",
-  "dev": "nodemon server.js",
-  "start": "node server.js"
-},
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "nodemon server.js",
+    "start": "node server.js",
+    "seed": "node prisma/seed.js"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
